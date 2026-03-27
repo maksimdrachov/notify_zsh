@@ -7,7 +7,7 @@
 When you run something slow like tests, backups, builds, or database imports, it is easy to switch to another window and forget to check when it finishes. `notify` solves that with a simple pattern:
 
 ```zsh
-some_command | notify
+notify some_command
 ```
 
 This is useful because it:
@@ -19,7 +19,23 @@ This is useful because it:
 
 ## How it works
 
-`notify` is designed to be the last step in a pipeline. It reads the command output with `cat`, so the output still appears in your terminal, then sends a notification after the pipeline finishes.
+`notify` works best when it runs the command directly:
+
+```zsh
+notify some_command args...
+```
+
+That keeps the command attached to the terminal, so long-running programs continue printing output as they run instead of switching to pipe buffering.
+
+If stdout is redirected but the shell is still interactive, `notify` uses `script` and `tee` to mirror output back to the controlling terminal.
+
+The older pipeline form still works for plain passthrough:
+
+```zsh
+some_command | notify
+```
+
+But in that mode the upstream command is still writing to a pipe, so some programs may buffer output until the end.
 
 If the command exits with a non-zero status, the notification urgency is raised to `critical`.
 
@@ -55,19 +71,26 @@ If `notify-send` is missing, `notify` still works, but it prints the status and 
 Basic usage:
 
 ```zsh
-some_command | notify
+notify some_command
 ```
 
 Examples:
 
 ```zsh
-npm test | notify
-rsync -av ~/projects ~/backup-drive | notify
-sleep 30 | notify
+notify npm test
+notify rsync -av ~/projects ~/backup-drive
+notify sleep 30
+```
+
+Pipeline passthrough is still available when you already have piped output:
+
+```zsh
+some_command | notify
 ```
 
 ## Notes
 
 - `notify` is mainly intended for interactive shell use.
-- Put it at the end of the command you want to watch.
+- Prefer `notify cmd ...` for long-running commands so output stays live.
+- Use the pipeline form only when you specifically need to consume piped input.
 - It is most useful for commands that take long enough that you may switch away from the terminal while they run.

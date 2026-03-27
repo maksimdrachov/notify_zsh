@@ -2,43 +2,63 @@ notify() {
   setopt localoptions extendedglob
 
   local job_info line after_status cmd_part exit_code=0 urgency=normal tmpfile
-  local -a lines command_parts
+  local command_display command_string
+  local -a lines command_parts pipeline_status
 
-  # Preserve the piped command's output while waiting for it to finish.
-  cat
+  if (( $# > 0 )); then
+    command_parts=("$@")
+    command_display="${(j: :)${(@qq)command_parts}}"
 
-  tmpfile="$(mktemp "${TMPDIR:-/tmp}/notify.XXXXXX")" || return 1
-  jobs -l >"$tmpfile" 2>/dev/null
-  job_info="$(<"$tmpfile")"
-  rm -f -- "$tmpfile"
-
-  if [[ -z $job_info ]]; then
-    if command -v notify-send >/dev/null 2>&1; then
-      notify-send -u normal "Command finished" "Status: unknown
-Command: (unable to determine)"
-    fi
-    return 0
-  fi
-
-  lines=(${(f)job_info})
-
-  for line in "${lines[@]}"; do
-    if [[ $line == *" exit "* ]]; then
-      after_status="${line#* exit }"
-      exit_code="${after_status%%[[:space:]]*}"
-      cmd_part="${after_status#${exit_code}}"
-    elif [[ $line == *" done "* ]]; then
-      exit_code=0
-      cmd_part="${line#* done }"
+    if [[ ! -t 1 && -t 2 ]] && command -v script >/dev/null 2>&1; then
+      command_string="$command_display"
+      script -qefc "exec zsh -lc ${(q)command_string}" /dev/null | tee /dev/tty 2>/dev/null
+      pipeline_status=("${pipestatus[@]}")
+      exit_code="${pipeline_status[1]:-1}"
     else
-      exit_code=1
-      cmd_part="$line"
+      "$@"
+      exit_code=$?
+    fi
+  else
+    # Piped input can be passed through, but upstream commands may buffer when
+    # writing to a pipe. Use `notify cmd ...` for real-time interactive output.
+    if [[ -t 1 || ! -t 2 ]]; then
+      cat
+    else
+      tee /dev/tty 2>/dev/null
     fi
 
-    cmd_part="${cmd_part##[[:space:]]#}"
-    cmd_part="${cmd_part%%[[:space:]]#}"
-    command_parts+=("$cmd_part")
-  done
+    tmpfile="$(mktemp "${TMPDIR:-/tmp}/notify.XXXXXX")" || return 1
+    jobs -l >"$tmpfile" 2>/dev/null
+    job_info="$(<"$tmpfile")"
+    rm -f -- "$tmpfile"
+
+    if [[ -z $job_info ]]; then
+      command_display="(pipeline input)"
+      exit_code=0
+    else
+      lines=(${(f)job_info})
+
+      for line in "${lines[@]}"; do
+        if [[ $line == *" exit "* ]]; then
+          after_status="${line#* exit }"
+          exit_code="${after_status%%[[:space:]]*}"
+          cmd_part="${after_status#${exit_code}}"
+        elif [[ $line == *" done "* ]]; then
+          exit_code=0
+          cmd_part="${line#* done }"
+        else
+          exit_code=1
+          cmd_part="$line"
+        fi
+
+        cmd_part="${cmd_part##[[:space:]]#}"
+        cmd_part="${cmd_part%%[[:space:]]#}"
+        command_parts+=("$cmd_part")
+      done
+
+      command_display="${(j: :)command_parts}"
+    fi
+  fi
 
   if (( exit_code != 0 )); then
     urgency=critical
@@ -48,10 +68,10 @@ Command: (unable to determine)"
     notify-send -u "$urgency" \
       "Command finished" \
       "Status: $exit_code
-Command: ${(j: :)command_parts}"
+Command: ${command_display:-"(unable to determine)"}"
   else
     print -u2 -- "Status: $exit_code"
-    print -u2 -- "Command: ${(j: :)command_parts}"
+    print -u2 -- "Command: ${command_display:-"(unable to determine)"}"
   fi
 
   return "$exit_code"
