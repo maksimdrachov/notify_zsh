@@ -1,0 +1,58 @@
+notify() {
+  setopt localoptions extendedglob
+
+  local job_info line after_status cmd_part exit_code=0 urgency=normal tmpfile
+  local -a lines command_parts
+
+  # Preserve the piped command's output while waiting for it to finish.
+  cat
+
+  tmpfile="$(mktemp "${TMPDIR:-/tmp}/notify.XXXXXX")" || return 1
+  jobs -l >"$tmpfile" 2>/dev/null
+  job_info="$(<"$tmpfile")"
+  rm -f -- "$tmpfile"
+
+  if [[ -z $job_info ]]; then
+    if command -v notify-send >/dev/null 2>&1; then
+      notify-send -u normal "Command finished" "Status: unknown
+Command: (unable to determine)"
+    fi
+    return 0
+  fi
+
+  lines=(${(f)job_info})
+
+  for line in "${lines[@]}"; do
+    if [[ $line == *" exit "* ]]; then
+      after_status="${line#* exit }"
+      exit_code="${after_status%%[[:space:]]*}"
+      cmd_part="${after_status#${exit_code}}"
+    elif [[ $line == *" done "* ]]; then
+      exit_code=0
+      cmd_part="${line#* done }"
+    else
+      exit_code=1
+      cmd_part="$line"
+    fi
+
+    cmd_part="${cmd_part##[[:space:]]#}"
+    cmd_part="${cmd_part%%[[:space:]]#}"
+    command_parts+=("$cmd_part")
+  done
+
+  if (( exit_code != 0 )); then
+    urgency=critical
+  fi
+
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send -u "$urgency" \
+      "Command finished" \
+      "Status: $exit_code
+Command: ${(j: :)command_parts}"
+  else
+    print -u2 -- "Status: $exit_code"
+    print -u2 -- "Command: ${(j: :)command_parts}"
+  fi
+
+  return "$exit_code"
+}
